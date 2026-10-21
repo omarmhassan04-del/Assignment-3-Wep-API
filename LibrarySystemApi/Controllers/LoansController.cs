@@ -1,170 +1,115 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
+using AutoMapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibrarySystemApi.Data;
-using LibrarySystemApi.DTOs;
-using LibrarySystemApi.Models;
+using LibrarySystemApi.Dtos.LoanDtos;
+using LibrarySystemApi.Entities;
 
 namespace LibrarySystemApi.Controllers
 {
-    [ApiController]
     [Route("api/[controller]")]
+    [ApiController]
     public class LoansController : ControllerBase
     {
-        private readonly LibraryDbContext _context;
+        private readonly ApplicationDbContext _dbContext;
+        private readonly IMapper _mapper;
 
-        public LoansController(LibraryDbContext context)
+        public LoansController(ApplicationDbContext dbContext, IMapper mapper)
         {
-            _context = context;
+            _dbContext = dbContext;
+            _mapper = mapper;
         }
 
-        [HttpGet]
-        public async Task<ActionResult<IEnumerable<LoanDto>>> GetAll()
+        [HttpGet("GetAllLoans")]
+        public async Task<IActionResult> GetAllLoans()
         {
-            var loans = await _context.Loans
-                .Include(l => l.Book)
-                .Include(l => l.Borrower)
-                .AsNoTracking()
-                .Select(l => new LoanDto
-                {
-                    BookId = l.BookId,
-                    BookTitle = l.Book != null ? l.Book.Title : null,
-                    BorrowerId = l.BorrowerId,
-                    BorrowerName = l.Borrower != null ? l.Borrower.Name : null,
-                    LoanDate = l.LoanDate,
-                    ReturnDate = l.ReturnDate
-                })
-                .ToListAsync();
+            var loans = await _dbContext.Loans
+                                       .Include(l => l.Book)
+                                       .Include(l => l.Borrower)
+                                       .AsNoTracking()
+                                       .ToListAsync();
 
-            return Ok(loans);
+            var response = _mapper.Map<List<Loan>, List<GetLoanResponse>>(loans);
+            return Ok(response);
         }
 
-        [HttpGet("{bookId}/{borrowerId}/{loanDate}")]
-        public async Task<ActionResult<LoanDto>> GetById(int bookId, int borrowerId, DateTime loanDate)
+        [HttpGet("GetById")]
+        public async Task<IActionResult> GetById(int bookId, int borrowerId, DateTime loanDate)
         {
-            var loan = await _context.Loans
-                .Include(l => l.Book)
-                .Include(l => l.Borrower)
-                .AsNoTracking()
-                .Where(l => l.BookId == bookId && l.BorrowerId == borrowerId && l.LoanDate == loanDate)
-                .Select(l => new LoanDto
-                {
-                    BookId = l.BookId,
-                    BookTitle = l.Book != null ? l.Book.Title : null,
-                    BorrowerId = l.BorrowerId,
-                    BorrowerName = l.Borrower != null ? l.Borrower.Name : null,
-                    LoanDate = l.LoanDate,
-                    ReturnDate = l.ReturnDate
-                })
-                .FirstOrDefaultAsync();
+            var loan = await _dbContext.Loans
+                                      .Include(l => l.Book)
+                                      .Include(l => l.Borrower)
+                                      .AsNoTracking()
+                                      .FirstOrDefaultAsync(l => l.BookId == bookId && l.BorrowerId == borrowerId && l.LoanDate == loanDate);
 
-            if (loan == null)
-            {
-                return NotFound();
-            }
+            if (loan is null)
+                return NotFound("Loan record is not found.");
 
-            return Ok(loan);
+            var response = _mapper.Map<Loan, GetLoanResponse>(loan);
+            return Ok(response);
         }
 
         [HttpPost]
-        public async Task<ActionResult<LoanDto>> Create([FromBody] CreateLoanDto dto)
+        public async Task<IActionResult> Create(CreateLoanRequest request)
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
+            var book = await _dbContext.Books.FindAsync(request.BookId);
+            if (book is null)
+                return NotFound($"Book with Id = {request.BookId} is not found.");
 
-            var bookExists = await _context.Books.AnyAsync(b => b.Id == dto.BookId);
-            if (!bookExists)
-            {
-                return BadRequest($"Book with ID {dto.BookId} does not exist.");
-            }
+            var borrower = await _dbContext.Borrowers.FindAsync(request.BorrowerId);
+            if (borrower is null)
+                return NotFound($"Borrower with Id = {request.BorrowerId} is not found.");
 
-            var borrowerExists = await _context.Borrowers.AnyAsync(b => b.Id == dto.BorrowerId);
-            if (!borrowerExists)
-            {
-                return BadRequest($"Borrower with ID {dto.BorrowerId} does not exist.");
-            }
-
-            var loanExists = await _context.Loans.AnyAsync(l =>
-                l.BookId == dto.BookId &&
-                l.BorrowerId == dto.BorrowerId &&
-                l.LoanDate == dto.LoanDate);
-
-            if (loanExists)
-            {
-                return Conflict("A loan record with the same Book, Borrower, and Loan Date already exists.");
-            }
+            var existing = await _dbContext.Loans.FindAsync(request.BookId, request.BorrowerId, request.LoanDate);
+            if (existing is not null)
+                return Conflict("A loan record with the same key already exists.");
 
             var loan = new Loan
             {
-                BookId = dto.BookId,
-                BorrowerId = dto.BorrowerId,
-                LoanDate = dto.LoanDate,
-                ReturnDate = dto.ReturnDate
+                BookId = request.BookId,
+                BorrowerId = request.BorrowerId,
+                LoanDate = request.LoanDate,
+                ReturnDate = request.ReturnDate,
+                CreatedAt = DateTime.UtcNow
             };
 
-            await _context.Loans.AddAsync(loan);
-            await _context.SaveChangesAsync();
-
-            await _context.Entry(loan).Reference(l => l.Book).LoadAsync();
-            await _context.Entry(loan).Reference(l => l.Borrower).LoadAsync();
-
-            var result = new LoanDto
-            {
-                BookId = loan.BookId,
-                BookTitle = loan.Book?.Title,
-                BorrowerId = loan.BorrowerId,
-                BorrowerName = loan.Borrower?.Name,
-                LoanDate = loan.LoanDate,
-                ReturnDate = loan.ReturnDate
-            };
-
-            return CreatedAtAction(
-                nameof(GetById),
-                new
-                {
-                    bookId = loan.BookId,
-                    borrowerId = loan.BorrowerId,
-                    loanDate = loan.LoanDate.ToString("o")
-                },
-                result);
+            await _dbContext.Loans.AddAsync(loan);
+            await _dbContext.SaveChangesAsync();
+            return Created();
         }
 
-        [HttpPut("{bookId}/{borrowerId}/{loanDate}")]
-        public async Task<IActionResult> Update(int bookId, int borrowerId, DateTime loanDate, [FromBody] UpdateLoanDto dto)
+        [HttpPut]
+        public async Task<IActionResult> Update(UpdateLoanRequest request)
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
+            var loan = await _dbContext.Loans.FindAsync(request.BookId, request.BorrowerId, request.LoanDate);
 
-            var loan = await _context.Loans.FindAsync(bookId, borrowerId, loanDate);
-            if (loan == null)
-            {
-                return NotFound();
-            }
+            if (loan is null)
+                return NotFound("Loan record is not found.");
 
-            loan.ReturnDate = dto.ReturnDate;
+            loan.ReturnDate = request.ReturnDate;
+            loan.ModifiedAt = DateTime.UtcNow;
 
-            await _context.SaveChangesAsync();
-            return NoContent();
+            _dbContext.Loans.Update(loan);
+            await _dbContext.SaveChangesAsync();
+            return Ok();
         }
 
-        [HttpDelete("{bookId}/{borrowerId}/{loanDate}")]
-        public async Task<IActionResult> Delete(int bookId, int borrowerId, DateTime loanDate)
+        [HttpDelete]
+        public async Task<IActionResult> Remove(int bookId, int borrowerId, DateTime loanDate)
         {
-            var loan = await _context.Loans.FindAsync(bookId, borrowerId, loanDate);
-            if (loan == null)
-            {
-                return NotFound();
-            }
+            var loan = await _dbContext.Loans.FindAsync(bookId, borrowerId, loanDate);
 
-            _context.Loans.Remove(loan);
-            await _context.SaveChangesAsync();
+            if (loan is null)
+                return NotFound("Loan record is not found.");
+
+            loan.IsDeleted = true;
+            loan.ModifiedAt = DateTime.UtcNow;
+
+            _dbContext.Loans.Update(loan);
+            await _dbContext.SaveChangesAsync();
             return NoContent();
         }
     }

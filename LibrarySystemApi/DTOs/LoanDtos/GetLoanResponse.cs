@@ -1,15 +1,13 @@
 using System;
 
-namespace LibrarySystemApi.Models
+namespace LibrarySystemApi.Dtos.LoanDtos
 {
-    public class Loan
+    public class GetLoanResponse
     {
         public int BookId { get; set; }
-        public Book Book { get; set; }
-
+        public string BookTitle { get; set; }
         public int BorrowerId { get; set; }
-        public Borrower Borrower { get; set; }
-
+        public string BorrowerName { get; set; }
         public DateTime LoanDate { get; set; }
         public DateTime? ReturnDate { get; set; }
     }

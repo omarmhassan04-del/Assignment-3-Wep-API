@@ -1,137 +1,100 @@
+using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
+using AutoMapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibrarySystemApi.Data;
-using LibrarySystemApi.DTOs;
-using LibrarySystemApi.Models;
+using LibrarySystemApi.Dtos.AuthorDtos;
+using LibrarySystemApi.Entities;
 
 namespace LibrarySystemApi.Controllers
 {
-    [ApiController]
     [Route("api/[controller]")]
+    [ApiController]
     public class AuthorsController : ControllerBase
     {
-        private readonly LibraryDbContext _context;
+        private readonly ApplicationDbContext _dbContext;
+        private readonly IMapper _mapper;
 
-        public AuthorsController(LibraryDbContext context)
+        public AuthorsController(ApplicationDbContext dbContext, IMapper mapper)
         {
-            _context = context;
+            _dbContext = dbContext;
+            _mapper = mapper;
         }
 
-        [HttpGet]
-        public async Task<ActionResult<IEnumerable<AuthorDto>>> GetAll()
+        [HttpGet("GetAllAuthors")]
+        public async Task<IActionResult> GetAllAuthors()
         {
-            var authors = await _context.Authors
-                .Include(a => a.Books)
-                .AsNoTracking()
-                .Select(a => new AuthorDto
-                {
-                    Id = a.Id,
-                    Name = a.Name,
-                    BirthDate = a.BirthDate,
-                    Books = a.Books.Select(b => new BookSummaryDto
-                    {
-                        Id = b.Id,
-                        Title = b.Title,
-                        ISBN = b.ISBN
-                    }).ToList()
-                })
-                .ToListAsync();
+            var authors = await _dbContext.Authors
+                                         .Include(a => a.Books)
+                                         .AsNoTracking()
+                                         .ToListAsync();
 
-            return Ok(authors);
+            var response = _mapper.Map<List<Author>, List<GetAuthorResponse>>(authors);
+            return Ok(response);
         }
 
-        [HttpGet("{id}")]
-        public async Task<ActionResult<AuthorDto>> GetById(int id)
+        [HttpGet("GetById/{id:int}")]
+        public async Task<IActionResult> GetById(int id)
         {
-            var author = await _context.Authors
-                .Include(a => a.Books)
-                .AsNoTracking()
-                .Where(a => a.Id == id)
-                .Select(a => new AuthorDto
-                {
-                    Id = a.Id,
-                    Name = a.Name,
-                    BirthDate = a.BirthDate,
-                    Books = a.Books.Select(b => new BookSummaryDto
-                    {
-                        Id = b.Id,
-                        Title = b.Title,
-                        ISBN = b.ISBN
-                    }).ToList()
-                })
-                .FirstOrDefaultAsync();
+            var author = await _dbContext.Authors
+                                        .Include(a => a.Books)
+                                        .AsNoTracking()
+                                        .FirstOrDefaultAsync(a => a.Id == id);
 
-            if (author == null)
-            {
-                return NotFound();
-            }
+            if (author is null)
+                return NotFound($"Author with Id = {id} is not found.");
 
-            return Ok(author);
+            var response = _mapper.Map<Author, GetAuthorResponse>(author);
+            return Ok(response);
         }
 
         [HttpPost]
-        public async Task<ActionResult<AuthorDto>> Create([FromBody] CreateAuthorDto dto)
+        public async Task<IActionResult> Create(CreateAuthorRequest request)
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
             var author = new Author
             {
-                Name = dto.Name,
-                BirthDate = dto.BirthDate
+                Name = request.Name,
+                BirthDate = request.BirthDate,
+                CreatedAt = DateTime.UtcNow
             };
 
-            await _context.Authors.AddAsync(author);
-            await _context.SaveChangesAsync();
-
-            var result = new AuthorDto
-            {
-                Id = author.Id,
-                Name = author.Name,
-                BirthDate = author.BirthDate,
-                Books = new List<BookSummaryDto>()
-            };
-
-            return CreatedAtAction(nameof(GetById), new { id = author.Id }, result);
+            await _dbContext.Authors.AddAsync(author);
+            await _dbContext.SaveChangesAsync();
+            return Created();
         }
 
-        [HttpPut("{id}")]
-        public async Task<IActionResult> Update(int id, [FromBody] UpdateAuthorDto dto)
+        [HttpPut]
+        public async Task<IActionResult> Update(UpdateAuthorRequest request)
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
+            var author = await _dbContext.Authors.FindAsync(request.Id);
 
-            var author = await _context.Authors.FindAsync(id);
-            if (author == null)
-            {
-                return NotFound();
-            }
+            if (author is null)
+                return NotFound($"Author with Id = {request.Id} is not found.");
 
-            author.Name = dto.Name;
-            author.BirthDate = dto.BirthDate;
+            author.Name = request.Name;
+            author.BirthDate = request.BirthDate;
+            author.ModifiedAt = DateTime.UtcNow;
 
-            await _context.SaveChangesAsync();
-            return NoContent();
+            _dbContext.Authors.Update(author);
+            await _dbContext.SaveChangesAsync();
+            return Ok();
         }
 
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int id)
+        [HttpDelete]
+        public async Task<IActionResult> Remove(int id)
         {
-            var author = await _context.Authors.FindAsync(id);
-            if (author == null)
-            {
-                return NotFound();
-            }
+            var author = await _dbContext.Authors.FindAsync(id);
 
-            _context.Authors.Remove(author);
-            await _context.SaveChangesAsync();
+            if (author is null)
+                return NotFound($"Author with Id = {id} is not found.");
+
+            author.IsDeleted = true;
+            author.ModifiedAt = DateTime.UtcNow;
+
+            _dbContext.Authors.Update(author);
+            await _dbContext.SaveChangesAsync();
             return NoContent();
         }
     }

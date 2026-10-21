@@ -1,145 +1,102 @@
+using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
+using AutoMapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibrarySystemApi.Data;
-using LibrarySystemApi.DTOs;
-using LibrarySystemApi.Models;
+using LibrarySystemApi.Dtos.BorrowerDtos;
+using LibrarySystemApi.Entities;
 
 namespace LibrarySystemApi.Controllers
 {
-    [ApiController]
     [Route("api/[controller]")]
+    [ApiController]
     public class BorrowersController : ControllerBase
     {
-        private readonly LibraryDbContext _context;
+        private readonly ApplicationDbContext _dbContext;
+        private readonly IMapper _mapper;
 
-        public BorrowersController(LibraryDbContext context)
+        public BorrowersController(ApplicationDbContext dbContext, IMapper mapper)
         {
-            _context = context;
+            _dbContext = dbContext;
+            _mapper = mapper;
         }
 
-        [HttpGet]
-        public async Task<ActionResult<IEnumerable<BorrowerDto>>> GetAll()
+        [HttpGet("GetAllBorrowers")]
+        public async Task<IActionResult> GetAllBorrowers()
         {
-            var borrowers = await _context.Borrowers
-                .Include(b => b.Loans)
-                    .ThenInclude(l => l.Book)
-                .AsNoTracking()
-                .Select(b => new BorrowerDto
-                {
-                    Id = b.Id,
-                    Name = b.Name,
-                    MembershipDate = b.MembershipDate,
-                    Loans = b.Loans.Select(l => new LoanDto
-                    {
-                        BookId = l.BookId,
-                        BookTitle = l.Book != null ? l.Book.Title : null,
-                        BorrowerId = l.BorrowerId,
-                        BorrowerName = b.Name,
-                        LoanDate = l.LoanDate,
-                        ReturnDate = l.ReturnDate
-                    }).ToList()
-                })
-                .ToListAsync();
+            var borrowers = await _dbContext.Borrowers
+                                           .Include(b => b.Loans)
+                                                .ThenInclude(l => l.Book)
+                                           .AsNoTracking()
+                                           .ToListAsync();
 
-            return Ok(borrowers);
+            var response = _mapper.Map<List<Borrower>, List<GetBorrowerResponse>>(borrowers);
+            return Ok(response);
         }
 
-        [HttpGet("{id}")]
-        public async Task<ActionResult<BorrowerDto>> GetById(int id)
+        [HttpGet("GetById/{id:int}")]
+        public async Task<IActionResult> GetById(int id)
         {
-            var borrower = await _context.Borrowers
-                .Include(b => b.Loans)
-                    .ThenInclude(l => l.Book)
-                .AsNoTracking()
-                .Where(b => b.Id == id)
-                .Select(b => new BorrowerDto
-                {
-                    Id = b.Id,
-                    Name = b.Name,
-                    MembershipDate = b.MembershipDate,
-                    Loans = b.Loans.Select(l => new LoanDto
-                    {
-                        BookId = l.BookId,
-                        BookTitle = l.Book != null ? l.Book.Title : null,
-                        BorrowerId = l.BorrowerId,
-                        BorrowerName = b.Name,
-                        LoanDate = l.LoanDate,
-                        ReturnDate = l.ReturnDate
-                    }).ToList()
-                })
-                .FirstOrDefaultAsync();
+            var borrower = await _dbContext.Borrowers
+                                          .Include(b => b.Loans)
+                                                .ThenInclude(l => l.Book)
+                                          .AsNoTracking()
+                                          .FirstOrDefaultAsync(b => b.Id == id);
 
-            if (borrower == null)
-            {
-                return NotFound();
-            }
+            if (borrower is null)
+                return NotFound($"Borrower with Id = {id} is not found.");
 
-            return Ok(borrower);
+            var response = _mapper.Map<Borrower, GetBorrowerResponse>(borrower);
+            return Ok(response);
         }
 
         [HttpPost]
-        public async Task<ActionResult<BorrowerDto>> Create([FromBody] CreateBorrowerDto dto)
+        public async Task<IActionResult> Create(CreateBorrowerRequest request)
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
             var borrower = new Borrower
             {
-                Name = dto.Name,
-                MembershipDate = dto.MembershipDate
+                Name = request.Name,
+                MembershipDate = request.MembershipDate,
+                CreatedAt = DateTime.UtcNow
             };
 
-            await _context.Borrowers.AddAsync(borrower);
-            await _context.SaveChangesAsync();
-
-            var result = new BorrowerDto
-            {
-                Id = borrower.Id,
-                Name = borrower.Name,
-                MembershipDate = borrower.MembershipDate,
-                Loans = new List<LoanDto>()
-            };
-
-            return CreatedAtAction(nameof(GetById), new { id = borrower.Id }, result);
+            await _dbContext.Borrowers.AddAsync(borrower);
+            await _dbContext.SaveChangesAsync();
+            return Created();
         }
 
-        [HttpPut("{id}")]
-        public async Task<IActionResult> Update(int id, [FromBody] UpdateBorrowerDto dto)
+        [HttpPut]
+        public async Task<IActionResult> Update(UpdateBorrowerRequest request)
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
+            var borrower = await _dbContext.Borrowers.FindAsync(request.Id);
 
-            var borrower = await _context.Borrowers.FindAsync(id);
-            if (borrower == null)
-            {
-                return NotFound();
-            }
+            if (borrower is null)
+                return NotFound($"Borrower with Id = {request.Id} is not found.");
 
-            borrower.Name = dto.Name;
-            borrower.MembershipDate = dto.MembershipDate;
+            borrower.Name = request.Name;
+            borrower.MembershipDate = request.MembershipDate;
+            borrower.ModifiedAt = DateTime.UtcNow;
 
-            await _context.SaveChangesAsync();
-            return NoContent();
+            _dbContext.Borrowers.Update(borrower);
+            await _dbContext.SaveChangesAsync();
+            return Ok();
         }
 
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int id)
+        [HttpDelete]
+        public async Task<IActionResult> Remove(int id)
         {
-            var borrower = await _context.Borrowers.FindAsync(id);
-            if (borrower == null)
-            {
-                return NotFound();
-            }
+            var borrower = await _dbContext.Borrowers.FindAsync(id);
 
-            _context.Borrowers.Remove(borrower);
-            await _context.SaveChangesAsync();
+            if (borrower is null)
+                return NotFound($"Borrower with Id = {id} is not found.");
+
+            borrower.IsDeleted = true;
+            borrower.ModifiedAt = DateTime.UtcNow;
+
+            _dbContext.Borrowers.Update(borrower);
+            await _dbContext.SaveChangesAsync();
             return NoContent();
         }
     }

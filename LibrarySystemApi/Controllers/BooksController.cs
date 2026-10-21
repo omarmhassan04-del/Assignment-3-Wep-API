@@ -1,146 +1,110 @@
+using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
+using AutoMapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibrarySystemApi.Data;
-using LibrarySystemApi.DTOs;
-using LibrarySystemApi.Models;
+using LibrarySystemApi.Dtos.BookDtos;
+using LibrarySystemApi.Entities;
 
 namespace LibrarySystemApi.Controllers
 {
-    [ApiController]
     [Route("api/[controller]")]
+    [ApiController]
     public class BooksController : ControllerBase
     {
-        private readonly LibraryDbContext _context;
+        private readonly ApplicationDbContext _dbContext;
+        private readonly IMapper _mapper;
 
-        public BooksController(LibraryDbContext context)
+        public BooksController(ApplicationDbContext dbContext, IMapper mapper)
         {
-            _context = context;
+            _dbContext = dbContext;
+            _mapper = mapper;
         }
 
-        [HttpGet]
-        public async Task<ActionResult<IEnumerable<BookDto>>> GetAll()
+        [HttpGet("GetAllBooks")]
+        public async Task<IActionResult> GetAllBooks()
         {
-            var books = await _context.Books
-                .Include(b => b.Author)
-                .AsNoTracking()
-                .Select(b => new BookDto
-                {
-                    Id = b.Id,
-                    Title = b.Title,
-                    ISBN = b.ISBN,
-                    AuthorId = b.AuthorId,
-                    AuthorName = b.Author != null ? b.Author.Name : null
-                })
-                .ToListAsync();
+            var books = await _dbContext.Books
+                                       .Include(b => b.Author)
+                                       .AsNoTracking()
+                                       .ToListAsync();
 
-            return Ok(books);
+            var response = _mapper.Map<List<Book>, List<GetBookResponse>>(books);
+            return Ok(response);
         }
 
-        [HttpGet("{id}")]
-        public async Task<ActionResult<BookDto>> GetById(int id)
+        [HttpGet("GetById/{id:int}")]
+        public async Task<IActionResult> GetById(int id)
         {
-            var book = await _context.Books
-                .Include(b => b.Author)
-                .AsNoTracking()
-                .Where(b => b.Id == id)
-                .Select(b => new BookDto
-                {
-                    Id = b.Id,
-                    Title = b.Title,
-                    ISBN = b.ISBN,
-                    AuthorId = b.AuthorId,
-                    AuthorName = b.Author != null ? b.Author.Name : null
-                })
-                .FirstOrDefaultAsync();
+            var book = await _dbContext.Books
+                                      .Include(b => b.Author)
+                                      .AsNoTracking()
+                                      .FirstOrDefaultAsync(b => b.Id == id);
 
-            if (book == null)
-            {
-                return NotFound();
-            }
+            if (book is null)
+                return NotFound($"Book with Id = {id} is not found.");
 
-            return Ok(book);
+            var response = _mapper.Map<Book, GetBookResponse>(book);
+            return Ok(response);
         }
 
         [HttpPost]
-        public async Task<ActionResult<BookDto>> Create([FromBody] CreateBookDto dto)
+        public async Task<IActionResult> Create(CreateBookRequest request)
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
-            var authorExists = await _context.Authors.AnyAsync(a => a.Id == dto.AuthorId);
-            if (!authorExists)
-            {
-                return BadRequest($"Author with ID {dto.AuthorId} does not exist.");
-            }
+            var author = await _dbContext.Authors.FindAsync(request.AuthorId);
+            if (author is null)
+                return NotFound($"Author with Id = {request.AuthorId} is not found.");
 
             var book = new Book
             {
-                Title = dto.Title,
-                ISBN = dto.ISBN,
-                AuthorId = dto.AuthorId
+                Title = request.Title,
+                ISBN = request.ISBN,
+                AuthorId = request.AuthorId,
+                CreatedAt = DateTime.UtcNow
             };
 
-            await _context.Books.AddAsync(book);
-            await _context.SaveChangesAsync();
-
-            await _context.Entry(book).Reference(b => b.Author).LoadAsync();
-
-            var result = new BookDto
-            {
-                Id = book.Id,
-                Title = book.Title,
-                ISBN = book.ISBN,
-                AuthorId = book.AuthorId,
-                AuthorName = book.Author?.Name
-            };
-
-            return CreatedAtAction(nameof(GetById), new { id = book.Id }, result);
+            await _dbContext.Books.AddAsync(book);
+            await _dbContext.SaveChangesAsync();
+            return Created();
         }
 
-        [HttpPut("{id}")]
-        public async Task<IActionResult> Update(int id, [FromBody] UpdateBookDto dto)
+        [HttpPut]
+        public async Task<IActionResult> Update(UpdateBookRequest request)
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
+            var book = await _dbContext.Books.FindAsync(request.Id);
 
-            var book = await _context.Books.FindAsync(id);
-            if (book == null)
-            {
-                return NotFound();
-            }
+            if (book is null)
+                return NotFound($"Book with Id = {request.Id} is not found.");
 
-            var authorExists = await _context.Authors.AnyAsync(a => a.Id == dto.AuthorId);
-            if (!authorExists)
-            {
-                return BadRequest($"Author with ID {dto.AuthorId} does not exist.");
-            }
+            var author = await _dbContext.Authors.FindAsync(request.AuthorId);
+            if (author is null)
+                return NotFound($"Author with Id = {request.AuthorId} is not found.");
 
-            book.Title = dto.Title;
-            book.ISBN = dto.ISBN;
-            book.AuthorId = dto.AuthorId;
+            book.Title = request.Title;
+            book.ISBN = request.ISBN;
+            book.AuthorId = request.AuthorId;
+            book.ModifiedAt = DateTime.UtcNow;
 
-            await _context.SaveChangesAsync();
-            return NoContent();
+            _dbContext.Books.Update(book);
+            await _dbContext.SaveChangesAsync();
+            return Ok();
         }
 
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int id)
+        [HttpDelete]
+        public async Task<IActionResult> Remove(int id)
         {
-            var book = await _context.Books.FindAsync(id);
-            if (book == null)
-            {
-                return NotFound();
-            }
+            var book = await _dbContext.Books.FindAsync(id);
 
-            _context.Books.Remove(book);
-            await _context.SaveChangesAsync();
+            if (book is null)
+                return NotFound($"Book with Id = {id} is not found.");
+
+            book.IsDeleted = true;
+            book.ModifiedAt = DateTime.UtcNow;
+
+            _dbContext.Books.Update(book);
+            await _dbContext.SaveChangesAsync();
             return NoContent();
         }
     }
