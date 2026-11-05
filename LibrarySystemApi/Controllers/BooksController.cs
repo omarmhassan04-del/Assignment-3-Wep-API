@@ -1,12 +1,7 @@
-using System;
-using System.Collections.Generic;
 using System.Threading.Tasks;
-using AutoMapper;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using LibrarySystemApi.Data;
 using LibrarySystemApi.Dtos.BookDtos;
-using LibrarySystemApi.Entities;
+using LibrarySystemApi.Services;
 
 namespace LibrarySystemApi.Controllers
 {
@@ -14,98 +9,48 @@ namespace LibrarySystemApi.Controllers
     [ApiController]
     public class BooksController : ControllerBase
     {
-        private readonly ApplicationDbContext _dbContext;
-        private readonly IMapper _mapper;
+        private readonly IBookService _service;
 
-        public BooksController(ApplicationDbContext dbContext, IMapper mapper)
+        public BooksController(IBookService service)
         {
-            _dbContext = dbContext;
-            _mapper = mapper;
+            _service = service;
         }
 
         [HttpGet("GetAllBooks")]
-        public async Task<IActionResult> GetAllBooks()
+        [HttpGet]
+        public async Task<IActionResult> GetAll(int pageNumber = 1, int pageSize = 10, string searchTerm = null)
         {
-            var books = await _dbContext.Books
-                                       .Include(b => b.Author)
-                                       .AsNoTracking()
-                                       .ToListAsync();
-
-            var response = _mapper.Map<List<Book>, List<GetBookResponse>>(books);
-            return Ok(response);
+            var result = await _service.GetAllAsync(pageNumber, pageSize, searchTerm);
+            return Ok(result);
         }
 
         [HttpGet("GetById/{id:int}")]
+        [HttpGet("{id:int}")]
         public async Task<IActionResult> GetById(int id)
         {
-            var book = await _dbContext.Books
-                                      .Include(b => b.Author)
-                                      .AsNoTracking()
-                                      .FirstOrDefaultAsync(b => b.Id == id);
-
-            if (book is null)
-                return NotFound($"Book with Id = {id} is not found.");
-
-            var response = _mapper.Map<Book, GetBookResponse>(book);
-            return Ok(response);
+            var result = await _service.GetByIdAsync(id);
+            return result.IsSuccess ? Ok(result) : NotFound(result);
         }
 
         [HttpPost]
         public async Task<IActionResult> Create(CreateBookRequest request)
         {
-            var author = await _dbContext.Authors.FindAsync(request.AuthorId);
-            if (author is null)
-                return NotFound($"Author with Id = {request.AuthorId} is not found.");
-
-            var book = new Book
-            {
-                Title = request.Title,
-                ISBN = request.ISBN,
-                AuthorId = request.AuthorId,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            await _dbContext.Books.AddAsync(book);
-            await _dbContext.SaveChangesAsync();
-            return Created();
+            var result = await _service.CreateAsync(request);
+            return result.IsSuccess ? Ok(result) : BadRequest(result);
         }
 
         [HttpPut]
         public async Task<IActionResult> Update(UpdateBookRequest request)
         {
-            var book = await _dbContext.Books.FindAsync(request.Id);
-
-            if (book is null)
-                return NotFound($"Book with Id = {request.Id} is not found.");
-
-            var author = await _dbContext.Authors.FindAsync(request.AuthorId);
-            if (author is null)
-                return NotFound($"Author with Id = {request.AuthorId} is not found.");
-
-            book.Title = request.Title;
-            book.ISBN = request.ISBN;
-            book.AuthorId = request.AuthorId;
-            book.ModifiedAt = DateTime.UtcNow;
-
-            _dbContext.Books.Update(book);
-            await _dbContext.SaveChangesAsync();
-            return Ok();
+            var result = await _service.UpdateAsync(request);
+            return result.IsSuccess ? Ok(result) : NotFound(result);
         }
 
         [HttpDelete]
         public async Task<IActionResult> Remove(int id)
         {
-            var book = await _dbContext.Books.FindAsync(id);
-
-            if (book is null)
-                return NotFound($"Book with Id = {id} is not found.");
-
-            book.IsDeleted = true;
-            book.ModifiedAt = DateTime.UtcNow;
-
-            _dbContext.Books.Update(book);
-            await _dbContext.SaveChangesAsync();
-            return NoContent();
+            var result = await _service.DeleteAsync(id);
+            return result.IsSuccess ? Ok(result) : NotFound(result);
         }
     }
 }
